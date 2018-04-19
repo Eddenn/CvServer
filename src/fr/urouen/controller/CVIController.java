@@ -1,15 +1,17 @@
 package fr.urouen.controller;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.StringReader;
-import java.io.StringWriter;
+import java.io.*;
+import java.net.ConnectException;
+import java.net.URISyntaxException;
+import java.sql.*;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
 
+import javax.annotation.PreDestroy;
+import javax.servlet.ServletException;
 import javax.xml.XMLConstants;
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBElement;
@@ -24,6 +26,9 @@ import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.SchemaFactory;
 import javax.xml.ws.http.HTTPException;
 
+import org.apache.catalina.LifecycleException;
+import org.apache.catalina.core.StandardContext;
+import org.apache.catalina.startup.Tomcat;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,16 +40,90 @@ import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 
-import fr.urouen.model.CVS;
 import fr.urouen.model.Cvi;
-
+import org.apache.catalina.WebResourceRoot;
+import org.apache.catalina.core.StandardContext;
+import org.apache.catalina.startup.Tomcat;
+import org.apache.catalina.webresources.DirResourceSet;
+import org.apache.catalina.webresources.StandardRoot;
 @RestController
 public class CVIController {
 
 	private Map<UUID,Cvi> bdd;
+	private Connection connection;
+    private PreparedStatement delete_query;
+    private PreparedStatement insert_query;
+    private PreparedStatement update_query;
 
-	public CVIController() {
+
+    public CVIController() throws SQLException {
 	    bdd = new HashMap<>();
+        connection = getConnection();
+        DatabaseMetaData dbm = connection.getMetaData();
+        // check si "cvi" table est présente
+        //ResultSet tables = dbm.getTables(null, null, "CVI", null);
+
+        createTable();
+        getAllCviFromTable();
+
+        delete_query = connection.prepareStatement("DELETE FROM CVI WHERE UUID = ?;");
+        insert_query = connection.prepareStatement("INSERT INTO CVI (UUID,XML) VALUES (?, ?);");
+        update_query = connection.prepareStatement("UPDATE CVI SET XML=? WHERE UUID=?;");
+    }
+
+    @PreDestroy
+    public void cleanUp() throws Exception {
+        connection.close();
+    }
+
+    private Connection getConnection() throws SQLException {
+	    //Récupère l'url en fonction de l'environnement (sur Heroku)
+        String dbUrl = System.getenv("JDBC_DATABASE_URL");
+        return DriverManager.getConnection(dbUrl);
+        //Sinon choisir l'url ici. (si localhost)
+        //return DriverManager.getConnection(DB_URL);
+    }
+
+    private void createTable() throws SQLException {
+        Statement stmt = connection.createStatement();
+        String sql ="CREATE TABLE IF NOT EXISTS CVI " +
+                    "(UUID CHAR(50) PRIMARY KEY NOT NULL," +
+                    " XML TEXT NOT NULL)";
+        stmt.executeUpdate(sql);
+        stmt.close();
+    }
+
+    private void getAllCviFromTable() throws SQLException {
+        Statement stmt = connection.createStatement();
+        ResultSet rs = stmt.executeQuery( "SELECT * FROM CVI;" );
+        while ( rs.next() ) {
+            String uuid = rs.getString("UUID").trim();
+            String xml = rs.getString("XML");
+            try {
+                bdd.put(UUID.fromString(uuid),unmarshal(xml));
+            } catch (JAXBException e) {
+                System.err.println("Can't unmarshall a CVI from table.");
+            }
+        }
+        rs.close();
+        stmt.close();
+    }
+
+    private void insertCviFromTable(UUID uuid, String xml) throws SQLException {
+        insert_query.setString(1,uuid.toString());
+        insert_query.setString(2,xml);
+        insert_query.executeUpdate();
+    }
+
+    private void removeCviFromTable(UUID uuid) throws SQLException {
+        delete_query.setString(1,uuid.toString());
+        delete_query.executeUpdate();
+    }
+
+    private void updateCviFromTable(UUID uuid, String xml) throws SQLException {
+        update_query.setString(1,xml);
+        update_query.setString(2,uuid.toString());
+        update_query.executeUpdate();
     }
 
     private static String generateMessage(String id, OperationStatus status, String description) {
@@ -153,6 +232,11 @@ public class CVIController {
 		
 		if(bdd.get(uuid) != null) {
 			bdd.remove(uuid);
+            try {
+                removeCviFromTable(uuid);
+            } catch (SQLException e) {
+                return generateMessage(OperationStatus.ERROR,"Cannot remove cvi of BDD.");
+            }
 		} else {
             return generateMessage(OperationStatus.ERROR,"Cvi not found.");
         }
@@ -200,6 +284,11 @@ public class CVIController {
 			try {
 				cvi = unmarshal(xml);
 				bdd.replace(uuid , cvi);
+                try {
+                    updateCviFromTable(uuid,xml);
+                } catch (SQLException e) {
+                    return generateMessage(OperationStatus.ERROR,"Cannot update into BDD.");
+                }
                 return generateMessage(id,OperationStatus.UPDATED);
 			} catch (JAXBException e) {
                 return generateMessage(OperationStatus.ERROR,"Cannot unmarshal xml into Cvi.");
@@ -254,6 +343,11 @@ public class CVIController {
 			cvi = unmarshal(xml);
 			UUID uuid = getUnusedUUID();
 			bdd.put( uuid , cvi);
+            try {
+                insertCviFromTable(uuid,xml);
+            } catch (SQLException e) {
+                return generateMessage(OperationStatus.ERROR,"Cannot insert into BDD.");
+            }
             return generateMessage(uuid.toString(),OperationStatus.INSERTED);
 		} catch (JAXBException e) {
 		    e.printStackTrace();
@@ -291,4 +385,32 @@ public class CVIController {
 
         return stringWriter.toString();
 	}
+
+    public static void main(String[] args) throws ServletException, LifecycleException {
+        String webappDirLocation = "src/main/webapp/";
+        Tomcat tomcat = new Tomcat();
+
+        //The port that we should run on can be set into an environment variable
+        //Look for that variable and default to 8080 if it isn't there.
+        String webPort = System.getenv("PORT");
+        if(webPort == null || webPort.isEmpty()) {
+            webPort = "80";
+        }
+
+        tomcat.setPort(Integer.valueOf(webPort));
+
+        StandardContext ctx = (StandardContext) tomcat.addWebapp("/", new File(webappDirLocation).getAbsolutePath());
+        System.out.println("configuring app with basedir: " + new File("./" + webappDirLocation).getAbsolutePath());
+
+        // Declare an alternative location for your "WEB-INF/classes" dir
+        // Servlet 3.0 annotation will work
+        File additionWebInfClasses = new File("target/classes");
+        WebResourceRoot resources = new StandardRoot(ctx);
+        resources.addPreResources(new DirResourceSet(resources, "/WEB-INF/classes",
+                additionWebInfClasses.getAbsolutePath(), "/"));
+        ctx.setResources(resources);
+
+        tomcat.start();
+        tomcat.getServer().await();
+    }
 }

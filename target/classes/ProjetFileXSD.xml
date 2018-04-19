@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<p:cvi xmlns:p="http://univ.fr/cvi" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://univ.fr/cvi ProjetFileXSD.xsd ">
+  <identite>
+    <nom>AZZZ</nom>
+    <prenom>aqsdqsdZ</prenom>
+  </identite>
+  <objectif>
+    <stage>stage</stage>
+  </objectif>
+  <prof>
+    <expe>
+      <datedeb>10-12-1990</datedeb>
+      <descript>descript</descript>
+    </expe>
+  </prof>
+  <competences>
+    <diplome niveau="V">
+      <date>10-12-1990</date>
+      <descript>descript</descript>
+      <institut>institut</institut>
+    </diplome>
+    <diplome niveau="V">
+      <date>10-12-1990</date>
+      <descript>descript</descript>
+      <institut>institut</institut>
+    </diplome>
+    <certif>
+      <datedeb>10-12-1990</datedeb>
+      <descript>descript</descript>
+    </certif>
+    <lv cert="" iso="en" nivi="10" nivs="A1"/>
+    <info>
+      <langage>
+        <nom>nom</nom>
+        <niveau>0</niveau>
+      </langage>
+    </info>
+  </competences>
+  <divers>
+    <descript>descript</descript>
+  </divers>
+</p:cvi>

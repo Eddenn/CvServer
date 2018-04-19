@@ -6,11 +6,11 @@
 </head>
 
 <body>
-	<div class="header">
-		<p>Tom Etienne</p>
-		<p>Date de derniere mise a jour : 13 mars 2018</p>
-		<p>Maven Project</p>
-	</div>
+	<img class="no-bottom-margin" src="/resources/logo_rouen.png" style="width: auto; height: 150px;" alt="Logo de l'Université de Rouen"/>
+	<h1 class="no-bottom-margin">Projet XML - Master G.I.L.</h1>
+	<h3 class="no-bottom-margin">HAZARD Alexandre<br/>
+		ETIENNE Tom</h3>
+	<h3 class="no-bottom-margin">Date de derniere mise a jour : 17 avril 2018</h3>
 
 	<div>
 		<h2>Liste des commandes :</h2>
