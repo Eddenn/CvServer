@@ -1,11 +1,8 @@
 package fr.urouen.controller;
 
 import java.io.*;
-import java.net.ConnectException;
-import java.net.URISyntaxException;
 import java.sql.*;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
@@ -19,12 +16,10 @@ import javax.xml.bind.JAXBException;
 import javax.xml.bind.Marshaller;
 import javax.xml.bind.Unmarshaller;
 import javax.xml.namespace.QName;
-import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.parsers.SAXParserFactory;
 import javax.xml.transform.Source;
 import javax.xml.transform.stream.StreamSource;
 import javax.xml.validation.SchemaFactory;
-import javax.xml.ws.http.HTTPException;
 
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.core.StandardContext;
@@ -37,64 +32,36 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.view.RedirectView;
 import org.xml.sax.InputSource;
-import org.xml.sax.SAXException;
 import org.xml.sax.XMLReader;
 
 import fr.urouen.model.Cvi;
 import org.apache.catalina.WebResourceRoot;
-import org.apache.catalina.core.StandardContext;
-import org.apache.catalina.startup.Tomcat;
 import org.apache.catalina.webresources.DirResourceSet;
 import org.apache.catalina.webresources.StandardRoot;
 @RestController
 public class CVIController {
 
 	private Map<UUID,Cvi> bdd;
-	private Connection connection;
-    private PreparedStatement delete_query;
-    private PreparedStatement insert_query;
-    private PreparedStatement update_query;
+    private PersistentManager persistentManager;
 
 
     public CVIController() throws SQLException {
 	    bdd = new HashMap<>();
-        connection = getConnection();
-        DatabaseMetaData dbm = connection.getMetaData();
-        // check si "cvi" table est présente
-        //ResultSet tables = dbm.getTables(null, null, "CVI", null);
+	    persistentManager = new PersistentManager();
 
-        createTable();
+        persistentManager.createTable();
         getAllCviFromTable();
 
-        delete_query = connection.prepareStatement("DELETE FROM CVI WHERE UUID = ?;");
-        insert_query = connection.prepareStatement("INSERT INTO CVI (UUID,XML) VALUES (?, ?);");
-        update_query = connection.prepareStatement("UPDATE CVI SET XML=? WHERE UUID=?;");
+
     }
 
     @PreDestroy
     public void cleanUp() throws Exception {
-        connection.close();
+        persistentManager.getConnection().close();
     }
 
-    private Connection getConnection() throws SQLException {
-	    //Récupère l'url en fonction de l'environnement (sur Heroku)
-        String dbUrl = System.getenv("JDBC_DATABASE_URL");
-        return DriverManager.getConnection(dbUrl);
-        //Sinon choisir l'url ici. (si localhost)
-        //return DriverManager.getConnection(DB_URL);
-    }
-
-    private void createTable() throws SQLException {
-        Statement stmt = connection.createStatement();
-        String sql ="CREATE TABLE IF NOT EXISTS CVI " +
-                    "(UUID CHAR(50) PRIMARY KEY NOT NULL," +
-                    " XML TEXT NOT NULL)";
-        stmt.executeUpdate(sql);
-        stmt.close();
-    }
-
-    private void getAllCviFromTable() throws SQLException {
-        Statement stmt = connection.createStatement();
+    public void getAllCviFromTable() throws SQLException {
+        Statement stmt = persistentManager.getConnection().createStatement();
         ResultSet rs = stmt.executeQuery( "SELECT * FROM CVI;" );
         while ( rs.next() ) {
             String uuid = rs.getString("UUID").trim();
@@ -107,67 +74,6 @@ public class CVIController {
         }
         rs.close();
         stmt.close();
-    }
-
-    private void insertCviFromTable(UUID uuid, String xml) throws SQLException {
-        insert_query.setString(1,uuid.toString());
-        insert_query.setString(2,xml);
-        insert_query.executeUpdate();
-    }
-
-    private void removeCviFromTable(UUID uuid) throws SQLException {
-        delete_query.setString(1,uuid.toString());
-        delete_query.executeUpdate();
-    }
-
-    private void updateCviFromTable(UUID uuid, String xml) throws SQLException {
-        update_query.setString(1,xml);
-        update_query.setString(2,uuid.toString());
-        update_query.executeUpdate();
-    }
-
-    private static String generateMessage(String id, OperationStatus status, String description) {
-        String sRet = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-        sRet += "<response>";
-
-        sRet += "<id>"+id+"</id>";
-        sRet += "<status>"+status.name()+"</status>";
-        sRet += "<description>"+description+"</description>";
-
-        sRet += "</response>";
-        return sRet;
-    }
-
-    private static String generateMessage(String id, OperationStatus status) {
-	    String sRet = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-	    sRet += "<response>";
-
-	    sRet += "<id>"+id+"</id>";
-	    sRet += "<status>"+status.name()+"</status>";
-
-	    sRet += "</response>";
-	    return sRet;
-    }
-
-    private static String generateMessage(OperationStatus status, String description) {
-        String sRet = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-        sRet += "<response>";
-
-        sRet += "<status>"+status.name()+"</status>";
-        sRet += "<description>"+description+"</description>";
-
-        sRet += "</response>";
-        return sRet;
-    }
-
-    private String generateMessage(OperationStatus status) {
-        String sRet = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-        sRet += "<response>";
-
-        sRet += "<status>"+status.name()+"</status>";
-
-        sRet += "</response>";
-        return sRet;
     }
 	
 	@RequestMapping(value = "/resume", method = RequestMethod.GET, produces = "application/xml; charset=utf-8")
@@ -201,7 +107,7 @@ public class CVIController {
 		try {
 			uuid = UUID.fromString(id);
 		} catch (IllegalArgumentException e) {
-			return generateMessage(id,OperationStatus.ERROR,"Bad UUID format.");
+			return MessageGenerator.generateMessage(id,OperationStatus.ERROR,"Bad UUID format.");
 		}
 		
 		if(bdd.get(uuid) != null) {
@@ -210,10 +116,10 @@ public class CVIController {
                 String marshalResult = marshal(bdd.get(uuid));
                 sRet += marshalResult.substring(marshalResult.indexOf('\n'));
             } catch (JAXBException e) {
-                return generateMessage(id,OperationStatus.ERROR,"Cannot marshal Cvi into xml.");
+                return MessageGenerator.generateMessage(id,OperationStatus.ERROR,"Cannot marshal Cvi into xml.");
             }
         } else {
-            return generateMessage(id,OperationStatus.ERROR,"Cvi not found.");
+            return MessageGenerator.generateMessage(id,OperationStatus.ERROR,"Cvi not found.");
         }
 
         sRet += "</cv>";
@@ -227,21 +133,21 @@ public class CVIController {
 		try {
 			uuid = UUID.fromString(id);
 		} catch (IllegalArgumentException e) {
-            return generateMessage(OperationStatus.ERROR,"Bad UUID format.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Bad UUID format.");
 		}
 		
 		if(bdd.get(uuid) != null) {
 			bdd.remove(uuid);
             try {
-                removeCviFromTable(uuid);
+                persistentManager.removeCviFromTable(uuid);
             } catch (SQLException e) {
-                return generateMessage(OperationStatus.ERROR,"Cannot remove cvi of BDD.");
+                return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cannot remove cvi of BDD.");
             }
 		} else {
-            return generateMessage(OperationStatus.ERROR,"Cvi not found.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cvi not found.");
         }
 
-		return generateMessage(id,OperationStatus.DELETED);
+		return MessageGenerator.generateMessage(id,OperationStatus.DELETED);
 	}
 
     @RequestMapping(value = "/update/{id}", method = RequestMethod.PUT, produces = "application/xml; charset=utf-8")
@@ -251,7 +157,7 @@ public class CVIController {
 		try {
 			uuid = UUID.fromString(id);
 		} catch (IllegalArgumentException e) {
-            return generateMessage(OperationStatus.ERROR,"Bad UUID format.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Bad UUID format.");
 		}
         //Validating
         SimpleHandlerError handler = new SimpleHandlerError();
@@ -271,11 +177,10 @@ public class CVIController {
             InputSource input = new InputSource( new StringReader( xml ) );
             reader.parse(input);
             if (handler.hasError()) {
-                return generateMessage(OperationStatus.ERROR,"Xml does not respect the xsd schema : "+handler.getErrors());
+                return MessageGenerator.generateMessage(OperationStatus.ERROR,"Xml does not respect the xsd schema : "+handler.getErrors());
             }
         } catch (Exception e) {
-            //e.printStackTrace();
-            return generateMessage(OperationStatus.ERROR,"Bad initialization of parser.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Bad initialization of parser.");
         }
 
 		//Unmarshal
@@ -285,16 +190,16 @@ public class CVIController {
 				cvi = unmarshal(xml);
 				bdd.replace(uuid , cvi);
                 try {
-                    updateCviFromTable(uuid,xml);
+                    persistentManager.updateCviFromTable(uuid,xml);
                 } catch (SQLException e) {
-                    return generateMessage(OperationStatus.ERROR,"Cannot update into BDD.");
+                    return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cannot update into BDD.");
                 }
-                return generateMessage(id,OperationStatus.UPDATED);
+                return MessageGenerator.generateMessage(id,OperationStatus.UPDATED);
 			} catch (JAXBException e) {
-                return generateMessage(OperationStatus.ERROR,"Cannot unmarshal xml into Cvi.");
+                return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cannot unmarshal xml into Cvi.");
 			}
 		} else {
-            return generateMessage(OperationStatus.ERROR,"Cvi not found.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cvi not found.");
         }
 	}
 
@@ -330,11 +235,11 @@ public class CVIController {
 			InputSource input = new InputSource( new StringReader( xml ) );
 			reader.parse(input);
 			if (handler.hasError()) {
-                return generateMessage(OperationStatus.ERROR,"Xml does not respect the xsd schema : "+handler.getErrors());
+                return MessageGenerator.generateMessage(OperationStatus.ERROR,"Xml does not respect the xsd schema : "+handler.getErrors());
 			}
 		} catch (Exception e) {
 		    //e.printStackTrace();
-            return generateMessage(OperationStatus.ERROR,"Bad initialization of parser.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Bad initialization of parser.");
 		}
         
 		//Unmarshall
@@ -344,14 +249,14 @@ public class CVIController {
 			UUID uuid = getUnusedUUID();
 			bdd.put( uuid , cvi);
             try {
-                insertCviFromTable(uuid,xml);
+                persistentManager.insertCviFromTable(uuid,xml);
             } catch (SQLException e) {
-                return generateMessage(OperationStatus.ERROR,"Cannot insert into BDD.");
+                return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cannot insert into BDD.");
             }
-            return generateMessage(uuid.toString(),OperationStatus.INSERTED);
+            return MessageGenerator.generateMessage(uuid.toString(),OperationStatus.INSERTED);
 		} catch (JAXBException e) {
 		    e.printStackTrace();
-            return generateMessage(OperationStatus.ERROR,"Cannot unmarshal xml into Cvi.");
+            return MessageGenerator.generateMessage(OperationStatus.ERROR,"Cannot unmarshal xml into Cvi.");
 		}
 	}
 	
